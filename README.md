@@ -1,1 +1,1 @@
-# ffmpeg_vf_xfade_add_vblur
+# ffmpeg xfade filter add vblur
