@@ -1,0 +1,86 @@
+--- vf_xfade.c.orig	2020-09-14 00:06:54 +0800
++++ vf_xfade.c	2020-09-15 20:09:46 +0800
+@@ -66,6 +66,7 @@
+     VUSLICE,
+     VDSLICE,
+     HBLUR,
++    VBLUR,
+     FADEGRAYS,
+     WIPETL,
+     WIPETR,
+@@ -190,6 +191,7 @@
+     {   "vuslice",    "vu slice transition",    0, AV_OPT_TYPE_CONST, {.i64=VUSLICE},    0, 0, FLAGS, "transition" },
+     {   "vdslice",    "vd slice transition",    0, AV_OPT_TYPE_CONST, {.i64=VDSLICE},    0, 0, FLAGS, "transition" },
+     {   "hblur",      "hblur transition",       0, AV_OPT_TYPE_CONST, {.i64=HBLUR},      0, 0, FLAGS, "transition" },
++    {   "vblur",      "vblur transition",       0, AV_OPT_TYPE_CONST, {.i64=VBLUR},      0, 0, FLAGS, "transition" },
+     {   "fadegrays",  "fadegrays transition",   0, AV_OPT_TYPE_CONST, {.i64=FADEGRAYS},  0, 0, FLAGS, "transition" },
+     {   "wipetl",     "wipe tl transition",     0, AV_OPT_TYPE_CONST, {.i64=WIPETL},     0, 0, FLAGS, "transition" },
+     {   "wipetr",     "wipe tr transition",     0, AV_OPT_TYPE_CONST, {.i64=WIPETR},     0, 0, FLAGS, "transition" },
+@@ -1356,6 +1358,59 @@
+ HBLUR_TRANSITION(8, uint8_t, 1)
+ HBLUR_TRANSITION(16, uint16_t, 2)
+ 
++#define VBLUR_TRANSITION(name, type, div)                                            \
++static void vblur##name##_transition(AVFilterContext *ctx,                           \
++                            const AVFrame *a, const AVFrame *b, AVFrame *out,        \
++                            float progress,                                          \
++                            int slice_start, int slice_end, int jobnr)               \
++{                                                                                    \
++    XFadeContext *s = ctx->priv;                                                     \
++    const int height = slice_end - slice_start;                                      \
++    const float prog = progress <= 0.5f ? progress * 2.f : (1.f - progress) * 2.f;   \
++    const int size = 1 + height * prog;                                              \
++    for (int p = 0; p < s->nb_planes; p++) {                                         \
++        for (int x = 0; x < out->width; x++) {                                       \
++            const type *xf0 = (const type *)(a->data[p] +                            \
++                              slice_start * a->linesize[p]);                         \
++            const type *xf1 = (const type *)(b->data[p] +                            \
++                              slice_start * b->linesize[p]);                         \
++            type *dst = (type *)(out->data[p] + slice_start * out->linesize[p]);     \
++            float sum0 = 0.f;                                                        \
++            float sum1 = 0.f;                                                        \
++            float cnt = size;                                                        \
++            const type *yf0 = xf0;                                                   \
++            const type *yf1 = xf1;                                                   \
++            for (int s = 0; s < size; s++) {                                         \
++                sum0 += yf0[x];                                                      \
++                sum1 += yf1[x];                                                      \
++                yf0 +=a->linesize[p] / div;                                          \
++                yf1 +=b->linesize[p] / div;                                          \
++            }                                                                        \
++            for (int y = 0; y < height; y++) {                                       \
++                dst[x] = mix(sum0 / cnt, sum1 / cnt, progress);                      \
++                if (slice_start + y + size < out->height) {                          \
++                    yf0 = (const type *)(a->data[p] +                                \
++                          (slice_start + y + size) * a->linesize[p]);                \
++                    yf1 = (const type *)(b->data[p] +                                \
++                          (slice_start + y + size) * b->linesize[p]);                \
++                    sum0 += yf0[x] - xf0[x];                                         \
++                    sum1 += yf1[x] - xf1[x];                                         \
++                } else {                                                             \
++                    sum0 -= xf0[x];                                                  \
++                    sum1 -= xf1[x];                                                  \
++                    cnt--;                                                           \
++                }                                                                    \
++                dst += out->linesize[p] / div;                                       \
++                xf0 += a->linesize[p] / div;                                         \
++                xf1 += b->linesize[p] / div;                                         \
++            }                                                                        \
++        }                                                                            \
++    }                                                                                \
++}
++
++VBLUR_TRANSITION(8, uint8_t, 1)
++VBLUR_TRANSITION(16, uint16_t, 2)
++
+ #define FADEGRAYS_TRANSITION(name, type, div)                                        \
+ static void fadegrays##name##_transition(AVFilterContext *ctx,                       \
+                             const AVFrame *a, const AVFrame *b, AVFrame *out,        \
+@@ -1695,6 +1750,7 @@
+     case VUSLICE:    s->transitionf = s->depth <= 8 ? vuslice8_transition    : vuslice16_transition;    break;
+     case VDSLICE:    s->transitionf = s->depth <= 8 ? vdslice8_transition    : vdslice16_transition;    break;
+     case HBLUR:      s->transitionf = s->depth <= 8 ? hblur8_transition      : hblur16_transition;      break;
++    case VBLUR:      s->transitionf = s->depth <= 8 ? vblur8_transition      : vblur16_transition;      break;
+     case FADEGRAYS:  s->transitionf = s->depth <= 8 ? fadegrays8_transition  : fadegrays16_transition;  break;
+     case WIPETL:     s->transitionf = s->depth <= 8 ? wipetl8_transition     : wipetl16_transition;     break;
+     case WIPETR:     s->transitionf = s->depth <= 8 ? wipetr8_transition     : wipetr16_transition;     break;
